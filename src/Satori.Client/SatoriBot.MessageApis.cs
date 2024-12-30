@@ -6,7 +6,8 @@ namespace Satori.Client;
 
 public partial class SatoriBot
 {
-    public Task<Message[]> CreateMessageAsync(string channelId, IEnumerable<Element> content)
+    public Task<Message[]> CreateMessageAsync(string channelId, IEnumerable<Element> content, 
+        CancellationToken cancellationToken = default)
     {
         var sb = new StringBuilder();
         foreach (var element in content)
@@ -16,6 +17,6 @@ public partial class SatoriBot
         {
             channel_id = channelId,
             content = sb.ToString()
-        });
+        }, cancellationToken);
     }
 }

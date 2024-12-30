@@ -17,9 +17,9 @@ public partial class SatoriBot
         _client.EventService.EventReceived += EventRaiser;
     }
 
-    private Task<TData> SendAsync<TData>(string endpoint, object? body)
+    private Task<TData> SendAsync<TData>(string endpoint, object? body, CancellationToken cancellationToken = default)
     {
-        return _client.ApiService.SendAsync<TData>(endpoint, _platform, _selfId, body);
+        return _client.ApiService.SendAsync<TData>(endpoint, _platform, _selfId, body, cancellationToken);
     }
 
     private void EventRaiser(object? sender, Event e)

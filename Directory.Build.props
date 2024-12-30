@@ -1,6 +1,6 @@
 ﻿<Project>
     <PropertyGroup>
-        <Version>1.0.0-alpha.1</Version>
+        <Version>1.0.0-alpha.2</Version>
         <Authors>bsdayo</Authors>
         <PackageTags>satori;satorijs;bot</PackageTags>
         <RepositoryUrl>https://github.com/bsdayo/Satori.NET</RepositoryUrl>
