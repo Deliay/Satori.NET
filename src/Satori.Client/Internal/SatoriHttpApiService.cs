@@ -1,14 +1,18 @@
 ﻿using System.Net.Http.Json;
+using System.Text.Json;
+using Microsoft.Extensions.Logging;
 
 namespace Satori.Client.Internal;
 
 internal class SatoriHttpApiService : ISatoriApiService
 {
     private readonly HttpClient _http;
+    private readonly ILogger<SatoriHttpClient>? _logger;
 
-    internal SatoriHttpApiService(SatoriHttpClient client)
+    internal SatoriHttpApiService(SatoriHttpClient client, ILogger<SatoriHttpClient>? logger = null)
     {
         _http = client;
+        _logger = logger;
     }
 
     public Task<TData> SendAsync<TData>(string endpoint,
@@ -33,8 +37,17 @@ internal class SatoriHttpApiService : ISatoriApiService
 
         var response = await _http.SendAsync(request, cancellationToken);
 
-        var data = await response.Content.ReadFromJsonAsync<TData>(SatoriClient.JsonOptions,
-            cancellationToken: cancellationToken);
-        return data!;
+        try
+        {
+            var data = await response.Content.ReadFromJsonAsync<TData>(SatoriClient.JsonOptions,
+                cancellationToken: cancellationToken);
+            return data!;
+        }
+        catch (Exception)
+        {
+            var raw = await response.Content.ReadAsStringAsync(cancellationToken);
+            Console.WriteLine($"Error caught, response code ={response.StatusCode}, response content = {raw}");
+            throw;
+        }
     }
 }
