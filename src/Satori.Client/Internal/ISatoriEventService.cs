@@ -6,7 +6,7 @@ internal interface ISatoriEventService
 {
     event EventHandler<Event> EventReceived;
 
-    Task StartAsync();
+    Task StartAsync(CancellationToken cancellationToken = default);
 
-    Task StopAsync();
+    Task StopAsync(CancellationToken cancellationToken = default);
 }

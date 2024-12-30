@@ -1,5 +1,7 @@
-﻿using System.Text.Json;
+﻿using System.Runtime.CompilerServices;
+using System.Text.Json;
 using Satori.Client.Internal;
+using Satori.Protocol.Models;
 
 namespace Satori.Client;
 
@@ -21,8 +23,11 @@ public class SatoriClient : IDisposable
 
     public SatoriClient(Uri baseUri, string? token = null)
     {
-        ApiService = new SatoriHttpApiService(baseUri, token);
-        EventService = new SatoriWebSocketEventService(baseUri, token, this);
+        ArgumentException.ThrowIfNullOrEmpty(token);
+        
+        var client = new SatoriHttpClient(baseUri, token);
+        ApiService = new SatoriHttpApiService(client);
+        EventService = new SatoriWebSocketEventService(client, this, token);
     }
 
     internal void Log(LogLevel logLevel, string message) =>
@@ -30,6 +35,11 @@ public class SatoriClient : IDisposable
 
     internal void Log(Exception e) => Logging?.Invoke(this, new SatoriClientLog(e));
 
+    public Task<Login> GetLoginAsync(CancellationToken cancellationToken = default)
+    {
+        return ApiService.SendAsync<Login>("/v1/login.get", cancellationToken);
+    }
+    
     public SatoriBot Bot(string platform, string selfId)
     {
         return new SatoriBot(this, platform, selfId);

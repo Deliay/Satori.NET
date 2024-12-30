@@ -2,7 +2,6 @@
 using System.Text.Json;
 using Satori.Protocol.Events;
 using Websocket.Client;
-using Timer = System.Timers.Timer;
 
 namespace Satori.Client.Internal;
 
@@ -11,35 +10,53 @@ internal sealed class SatoriWebSocketEventService : ISatoriEventService, IDispos
     private readonly WebsocketClient _ws;
     private readonly Uri _wsUri;
     private readonly string? _token;
-    private readonly SatoriClient _client;
-    private readonly Timer _pingTimer;
+    private readonly SatoriClient _satoriClient;
+    private CancellationTokenSource? _csc;
 
     public event EventHandler<Event>? EventReceived;
 
-    public SatoriWebSocketEventService(Uri baseUri, string? token, SatoriClient client)
+    private static Func<Uri, CancellationToken, Task<WebSocket>>
+        Factory(HttpClient baseClient)
     {
-        _wsUri = new Uri(new UriBuilder(baseUri) { Scheme = "ws" }.Uri,
+        return Func;
+
+        async Task<WebSocket> Func(Uri wsUri, CancellationToken cancellationToken = default)
+        {
+            var ws = new ClientWebSocket();
+            await ws.ConnectAsync(wsUri, baseClient, cancellationToken);
+
+            return ws;
+        }
+    }
+    
+    public SatoriWebSocketEventService(SatoriHttpClient httpClient, SatoriClient satoriClient, string token)
+    {
+        _wsUri = new Uri(new UriBuilder(httpClient.BaseAddress!) { Scheme = "ws" }.Uri,
             new Uri("/v1/events", UriKind.Relative));
-        _ws = new WebsocketClient(_wsUri);
+        _ws = new WebsocketClient(_wsUri, logger: null, Factory(httpClient));
         _token = token;
-        _client = client;
+        _satoriClient = satoriClient;
 
         _ws.MessageReceived.Subscribe(OnMessageReceived);
         _ws.DisconnectionHappened.Subscribe(OnDisconnectionHappened);
         _ws.ReconnectionHappened.Subscribe(OnReconnectionHappened);
 
-        _pingTimer = new Timer
+    }
+
+    private static readonly Signal PingSignal = new() { Op = SignalOperation.Ping };
+    private async Task SignalInterval(CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested)
         {
-            AutoReset = true,
-            Interval = TimeSpan.FromSeconds(10).TotalMilliseconds
-        };
-        _pingTimer.Elapsed += (_, _) => SendSignal(new Signal { Op = SignalOperation.Ping });
+            SendSignal(PingSignal);
+            await Task.Delay(TimeSpan.FromSeconds(10), cancellationToken);
+        }
     }
 
     private void SendSignal<T>(T signal) where T : Signal
     {
         var text = JsonSerializer.Serialize(signal, SatoriClient.JsonOptions);
-        _client.Log(LogLevel.Trace, $"WebSocket --Send-> {text}");
+        _satoriClient.Log(LogLevel.Trace, $"WebSocket --Send-> {text}");
         _ws.Send(text);
     }
 
@@ -47,7 +64,7 @@ internal sealed class SatoriWebSocketEventService : ISatoriEventService, IDispos
     {
         try
         {
-            _client.Log(LogLevel.Trace, $"WebSocket <-Recv-- {message}");
+            _satoriClient.Log(LogLevel.Trace, $"WebSocket <-Recv-- {message}");
             var json = JsonDocument.Parse(message.Text!);
             var op = (SignalOperation)json.RootElement.GetProperty("op").GetInt32();
 
@@ -60,13 +77,13 @@ internal sealed class SatoriWebSocketEventService : ISatoriEventService, IDispos
         }
         catch (Exception e)
         {
-            _client.Log(e);
+            _satoriClient.Log(e);
         }
     }
 
     private void OnDisconnectionHappened(DisconnectionInfo info)
     {
-        _client.Log(LogLevel.Information, $"WebSocket disconnected. Status: {info.CloseStatus}");
+        _satoriClient.Log(LogLevel.Information, $"WebSocket disconnected. Status: {info.CloseStatus}");
     }
 
     private void OnReconnectionHappened(ReconnectionInfo info)
@@ -74,29 +91,38 @@ internal sealed class SatoriWebSocketEventService : ISatoriEventService, IDispos
         if (info.Type == ReconnectionType.Initial)
             return;
 
-        _client.Log(LogLevel.Information, "WebSocket reconnecting...");
+        _satoriClient.Log(LogLevel.Information, "WebSocket reconnecting...");
     }
 
-    public async Task StartAsync()
+    public async Task StartAsync(CancellationToken cancellationToken = default)
     {
-        _client.Log(LogLevel.Debug, $"Connecting to {_wsUri}...");
-        await _ws.StartOrFail();
-
+        _csc = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var newCancelToken = _csc.Token;
+        
+        _satoriClient.Log(LogLevel.Debug, $"Connecting to {_wsUri}...");
+        await _ws.StartOrFail().WaitAsync(newCancelToken);
+        
         var identify = new Signal<IdentifySignalBody>
         {
             Op = SignalOperation.Identify,
             Body = new IdentifySignalBody { Token = _token }
         };
         SendSignal(identify);
-
-        _pingTimer.Start();
+        
+        _ = SignalInterval(newCancelToken);
     }
 
-    public async Task StopAsync()
+    public async Task StopAsync(CancellationToken cancellationToken = default)
     {
-        _pingTimer.Stop();
-        await _ws.StopOrFail(WebSocketCloseStatus.NormalClosure, "");
+        using var cancelSource = _csc;
+        
+        await _ws.StopOrFail(WebSocketCloseStatus.NormalClosure, "")
+            .WaitAsync(cancellationToken);
     }
 
-    public void Dispose() => _ws.Dispose();
+    public void Dispose()
+    {
+        _ws.Dispose();
+        _csc?.Dispose();
+    }
 }
